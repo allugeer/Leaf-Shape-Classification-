@@ -2,8 +2,6 @@
 import os
 import json
 import math
-import time
-import random
 import urllib.parse
 import html as html_lib
 import functools
@@ -11,6 +9,7 @@ import asyncio
 
 import gradio as gr
 from PIL import Image as PILImage, ImageDraw
+from leaf_inference import predict_image
 
 # ----------------------------------------------------------------------
 # 常量与预设文案
@@ -26,9 +25,6 @@ CATEGORY_FEATURES = {
     "椭圆形": "叶片中部最宽，两端渐窄，整体呈椭圆轮廓。",
     "线形": "叶片细长如线，长宽比明显偏大。",
 }
-
-# 模拟识别失败的概率（仅用于演示“识别失败”状态，可改为 0.0 关闭）
-FAILURE_RATE = 0.05
 
 # 允许的本地图片格式
 ALLOWED_EXTS = {".jpg", ".jpeg", ".png"}
@@ -184,15 +180,11 @@ def make_sample_images():
 
 
 # ----------------------------------------------------------------------
-# 模拟推理（后续替换为真实模型即可）
+# 真实模型推理
 # ----------------------------------------------------------------------
-def mock_predict():
-    """生成 4 类随机分数，四者之和为 100，顶部类别与最高分一致。"""
-    weights = [random.random() + 0.05 for _ in CLASSES]
-    total = sum(weights)
-    percents = [round(w / total * 100, 1) for w in weights]
-    percents[-1] = round(100 - sum(percents[:-1]), 1)
-    return percents
+def model_predict(image_path):
+    result = predict_image(image_path, expected_classes=CLASSES)
+    return [result['scores'][name] * 100 for name in CLASSES]
 
 
 # ----------------------------------------------------------------------
@@ -213,7 +205,7 @@ def left_head_html(state):
 
 
 def right_head_html(state):
-    """右卡（识别结果）头部：标题 + 状态点 / 模拟结果标识。"""
+    """右卡（识别结果）头部与真实推理状态。"""
     if state == "empty":
         status = '<span class="dot dot-gray"></span><span>等待上传</span>'
     elif state == "uploaded":
@@ -221,8 +213,7 @@ def right_head_html(state):
     elif state == "recognizing":
         status = '<span class="mini-spin"></span><span>正在识别…</span>'
     elif state == "done":
-        status = ('<span class="dot dot-green"></span><span>识别完成</span>'
-                  '<span class="badge-sim">模拟结果</span>')
+        status = '<span class="dot dot-green"></span><span>识别完成</span>'
     else:
         status = '<span class="dot dot-red"></span><span>识别失败</span>'
     return (f'<div class="panel-head"><div class="ph-title">{_icon("image_search", "#8fd0ff", 21)}'
@@ -309,10 +300,11 @@ def result_done_html(percents):
         '<div class="result-top">'
         f'<div class="rt-item"><span class="rt-label">识别类别：</span><span class="rt-badge">{top_name}</span></div>'
         '<div class="rt-sep"></div>'
-        f'<div class="rt-item"><span class="rt-label">分类置信度：</span><span class="rt-conf">{top_conf:.1f}%</span></div>'
+        f'<div class="rt-item"><span class="rt-label">模型分数：</span><span class="rt-conf">{top_conf:.1f}%</span></div>'
         '</div>'
         '<div class="score-title">四类分数</div>'
         f'<div class="score-list">{"".join(rows)}</div>'
+        '<div class="fb-note">分数为四类之间的相对得分，不代表识别正确概率；范围外图片也可能被分到其中一类。</div>'
         '<div class="feature-box">'
         f'<div class="fb-title">{_icon("info", "#8fd0ff", 16)}<span>该类别的参考特征</span></div>'
         f'<div class="fb-text">{CATEGORY_FEATURES[top_name]}</div>'
@@ -455,9 +447,6 @@ footer, .gradio-container footer{ display:none !important; }
 .dot-green{ background:#41d98c; box-shadow:0 0 8px rgba(65,217,140,.8); }
 .dot-blue{ background:#8fd0ff; box-shadow:0 0 8px rgba(143,208,255,.7); }
 .dot-red{ background:#ff7a7a; box-shadow:0 0 8px rgba(255,122,122,.7); }
-.badge-sim{ display:inline-flex; align-items:center; margin-left:10px;
-  background:linear-gradient(135deg,#ffcf87,#ffab4d); color:#5b3200;
-  font-size:12px; font-weight:700; padding:2px 10px; border-radius:6px; letter-spacing:1px; }
 
 /* ============ 按钮 ============ */
 .leaf-btn{ display:inline-flex !important; align-items:center; justify-content:center; gap:8px;
@@ -788,7 +777,7 @@ def on_clear(state):
 
 
 def on_start(image, state):
-    """开始识别（生成器）：识别中 → 模拟推理 → 完成 / 失败。"""
+    """开始识别（生成器）：识别中 → 真实推理 → 完成 / 失败。"""
     fname = os.path.basename(image) if image else ""
     # 前置校验：未上传 / 格式不支持 / 文件损坏
     if image is None or not os.path.exists(image):
@@ -815,16 +804,13 @@ def on_start(image, state):
            result_recognizing_html(),
            state]
 
-    # 模拟约 1.5~2 秒的推理耗时（接入真实模型后不要为动画延长推理）
-    time.sleep(random.uniform(1.5, 2.0))
-
-    # 状态 2a：模拟推理异常（演示“识别失败”状态，可用 FAILURE_RATE = 0.0 关闭）
-    if random.random() < FAILURE_RATE:
-        yield error_updates(fname, state, "模拟推理过程出现异常，请重试。")
+    try:
+        percents = model_predict(image)
+    except Exception as error:
+        yield error_updates(fname, state, f"模型识别失败：{error}")
         return
 
-    # 状态 2b：识别完成（四类分数之和为 100%，顶部与最高分一致）
-    percents = mock_predict()
+    # 展示模型实际输出，按类别名称映射到界面。
     yield [left_head_html("uploaded"),
            zone_html("uploaded", fname),
            gr.update(value="▶ 开始识别", interactive=True),

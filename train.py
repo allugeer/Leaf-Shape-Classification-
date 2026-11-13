@@ -20,35 +20,58 @@ print(f"🔥 正在使用的计算设备: {device}")
 # ---------------- 1. 准备数据 (加入数据增强) ----------------
 # 训练用的处理：随机裁剪、随机翻转、颜色微调（让AI多见见世面）
 train_transforms = transforms.Compose([
-    transforms.RandomResizedCrop(224, scale=(0.8, 1.0)),
+    transforms.Resize((224, 224)),
     transforms.RandomHorizontalFlip(),
     transforms.ColorJitter(brightness=0.2, contrast=0.2),
     transforms.ToTensor(),
+    transforms.Normalize(
+    mean=[0.485, 0.456, 0.406],
+    std=[0.229, 0.224, 0.225]
+),
 ])
 
 # 验证用的处理：只缩放（保持原样）
 val_transforms = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
+    transforms.Normalize(
+    mean=[0.485, 0.456, 0.406],
+    std=[0.229, 0.224, 0.225]
+),
 ])
 
 with open("class_names.json", "r", encoding="utf-8") as f:
     class_names = json.load(f)
 
-full_dataset = datasets.ImageFolder(root=DATA_DIR)
-# 划分数据集
-train_size = int(0.8 * len(full_dataset))
-val_size = len(full_dataset) - train_size
-train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
+train_dataset = datasets.ImageFolder(
+    root="data/train",
+    transform=train_transforms
+)
+val_dataset = datasets.ImageFolder(
+    root="data/val",
+    transform=val_transforms
+)
 
-# 给训练集和验证集分别加上不同的处理规则
-train_dataset.dataset.transform = train_transforms
-val_dataset.dataset.transform = val_transforms
+# 核对类别，并保存模型实际使用的编号顺序
+if set(train_dataset.classes) != set(class_names):
+    raise ValueError("训练文件夹名称与 class_names.json 不一致")
 
-train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)
-print(f"📊 数据划分完毕：训练集 {train_size} 张，验证集 {val_size} 张")
+if train_dataset.class_to_idx != val_dataset.class_to_idx:
+    raise ValueError("训练集和验证集的类别不一致")
 
+class_names = train_dataset.classes
+
+train_loader = DataLoader(
+    train_dataset, batch_size=BATCH_SIZE, shuffle=True
+)
+val_loader = DataLoader(
+    val_dataset, batch_size=BATCH_SIZE, shuffle=False
+)
+
+print(
+    f"训练集 {len(train_dataset)} 张，"
+    f"验证集 {len(val_dataset)} 张"
+)
 # ---------------- 2. 建立模型 ----------------
 model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
 for param in model.parameters():

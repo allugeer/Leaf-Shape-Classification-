@@ -9,7 +9,7 @@ from pathlib import Path
 MODEL_PATH = "leaf_model.pth"
 # 这里我们暂时评估 data/train 文件夹里的所有图片
 # 等以后 A 给了专门的“测试集”文件夹，把这里改成 "data/test" 即可
-TEST_DIR = Path("data/train") 
+TEST_DIR = Path("data/test") 
 OUTPUT_CSV = "result.csv"
 
 # 1. 加载模型
@@ -25,6 +25,10 @@ model.eval()
 transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
+    transforms.Normalize(
+        mean=[0.485, 0.456, 0.406],
+        std=[0.229, 0.224, 0.225]
+    ),
 ])
 
 # 3. 批量测试
